@@ -3,12 +3,13 @@ using System.Collections.Generic;
 using System.Net;
 using System.Threading.Tasks;
 
-namespace SIPSorceryMedia.Abstractions.V1
+namespace SIPSorceryMedia.Abstractions
 {
-    public delegate void EncodedSampleDelegate(uint durationRtpUnits, byte[] sample);
-    public delegate void RawAudioSampleDelegate(AudioSamplingRatesEnum samplingRate, uint durationMilliseconds, short[] sample);
-    public delegate void RawVideoSampleDelegate(uint durationMilliseconds, int width, int height, byte[] sample, VideoPixelFormatsEnum pixelFormat);
-    public delegate void VideoSinkSampleDecodedDelegate(byte[] sample, uint width, uint height, int stride, VideoPixelFormatsEnum pixelFormat);
+    public delegate void OnRawAudioSampleDelegate(AudioSamplingRatesEnum samplingRate, uint durationMilliseconds, short[] sample);
+    public delegate void OnEncodedAudioSampleDelegate(uint durationRtpUnits, byte[] sample, AudioFormat encodedFormat);
+    public delegate void OnRawVideoSampleDelegate(uint durationMilliseconds, VideoSample rawSample);
+    public delegate void OnEncodedVideoSampleDelegate(uint durationRtpUnits, byte[] sample, VideoFormat encodedFormat);
+    public delegate void OnDecodedVideoSampleDelegate(VideoSample decodedSample);
     public delegate void SourceErrorDelegate(string errorMessage);
 
     public enum AudioSamplingRatesEnum
@@ -408,7 +409,7 @@ namespace SIPSorceryMedia.Abstractions.V1
         public bool IsEmpty() => !_isNonEmpty;
     }
 
-    public class MediaEndPoints
+    public class MediaEndPointInterfaces
     {
         public IAudioSource AudioSource { get; set; }
         public IAudioSink AudioSink { get; set; }
@@ -446,25 +447,46 @@ namespace SIPSorceryMedia.Abstractions.V1
     {
         public uint Width;
         public uint Height;
+        public uint Stride;
         public byte[] Sample;
+        public VideoPixelFormatsEnum PixelFormat;
     }
 
     public interface IVideoEncoder : IDisposable
     {
-        bool IsSupported(VideoCodecsEnum codec);
+        /// <summary>
+        /// Checks whether a video format is supported by this encoder.
+        /// </summary>
+        /// <param name="format">The video format to check.</param>
+        /// <returns>True if the format is supported or false if not.</returns>
+        bool IsSupported(VideoFormat format);
 
-        byte[] EncodeVideo(int width, int height, byte[] sample, VideoPixelFormatsEnum pixelFormat, VideoCodecsEnum codec);
+        /// <summary>
+        /// Encodes a video sample.
+        /// </summary>
+        /// <param name="sample">The raw sample to encode.</param>
+        /// <param name="format">The encoded video format to encode the sample with.</param>
+        /// <param name="forceKeyFrame">If set to true the encoder will be explicitly requested to
+        /// encode the sample as a key frame.</param>
+        /// <returns>A buffer holding the encoded video sample.</returns>
+        byte[] EncodeVideo(VideoSample sample, VideoFormat format, bool forceKeyFrame);
 
-        void ForceKeyFrame();
-
-        IEnumerable<VideoSample> DecodeVideo(byte[] encodedSample, VideoPixelFormatsEnum pixelFormat, VideoCodecsEnum codec);
+        /// <summary>
+        /// Decodes an encoded video sample.
+        /// </summary>
+        /// <param name="encodedSample">The encoded sample to decode.</param>
+        /// <param name="format">The format of the encoded sample.</param>
+        /// <param name="desiredOutputFormat">This parameter should be set to the desired output pixel format. The 
+        /// encoder may not support the format. The pixel format of each decoded sample must be checked.</param>
+        /// <returns>A list of decoded video samples. Can be empty. A decode call can also return multiple samples.</returns>
+        IEnumerable<VideoSample> DecodeVideo(byte[] encodedSample, VideoFormat format, VideoPixelFormatsEnum desiredOutputFormat);
     }
 
     public interface IAudioSource
     {
-        event EncodedSampleDelegate OnAudioSourceEncodedSample;
+        event OnEncodedAudioSampleDelegate OnEncodedAudioSample;
 
-        event RawAudioSampleDelegate OnAudioSourceRawSample;
+        event OnRawAudioSampleDelegate OnRawAudioSample;
 
         event SourceErrorDelegate OnAudioSourceError;
 
@@ -476,9 +498,9 @@ namespace SIPSorceryMedia.Abstractions.V1
 
         Task CloseAudio();
 
-        List<AudioFormat> GetAudioSourceFormats();
+        List<AudioFormat> GetEncoderFormats();
 
-        void SetAudioSourceFormat(AudioFormat audioFormat);
+        void SetEncoderFormat(AudioFormat audioFormat);
 
         void RestrictFormats(Func<AudioFormat, bool> filter);
 
@@ -495,8 +517,6 @@ namespace SIPSorceryMedia.Abstractions.V1
 
         List<AudioFormat> GetAudioSinkFormats();
 
-        void SetAudioSinkFormat(AudioFormat audioFormat);
-
         void GotAudioRtp(IPEndPoint remoteEndPoint, uint ssrc, uint seqnum, uint timestamp, int payloadID, bool marker, byte[] payload);
 
         void RestrictFormats(Func<AudioFormat, bool> filter);
@@ -512,9 +532,9 @@ namespace SIPSorceryMedia.Abstractions.V1
 
     public interface IVideoSource
     {
-        event EncodedSampleDelegate OnVideoSourceEncodedSample;
+        event OnEncodedVideoSampleDelegate OnEncodedVideoSample;
 
-        event RawVideoSampleDelegate OnVideoSourceRawSample;
+        event OnRawVideoSampleDelegate OnRawVideoSample;
 
         event SourceErrorDelegate OnVideoSourceError;
 
@@ -526,13 +546,11 @@ namespace SIPSorceryMedia.Abstractions.V1
 
         Task CloseVideo();
 
-        List<VideoFormat> GetVideoSourceFormats();
+        List<VideoFormat> GetEncoderFormats();
 
-        void SetVideoSourceFormat(VideoFormat videoFormat);
+        void SetEncoderFormat(VideoFormat videoFormat);
 
         void RestrictFormats(Func<VideoFormat, bool> filter);
-
-        void ExternalVideoSourceRawSample(uint durationMilliseconds, int width, int height, byte[] sample, VideoPixelFormatsEnum pixelFormat);
 
         void ForceKeyFrame();
 
@@ -544,26 +562,53 @@ namespace SIPSorceryMedia.Abstractions.V1
     public interface IVideoSink
     {
         /// <summary>
-        /// This event will be fired by the sink after is decodes a video frame from the RTP stream.
+        /// This event will be fired by the sink after it decodes a video frame from the RTP stream.
         /// </summary>
-        event VideoSinkSampleDecodedDelegate OnVideoSinkDecodedSample;
+        event OnDecodedVideoSampleDelegate OnDecodedVideoSample;
 
-        void GotVideoRtp(IPEndPoint remoteEndPoint, uint ssrc, uint seqnum, uint timestamp, int payloadID, bool marker, byte[] payload);
+        /// <summary>
+        /// This method gets called on the sink when a full video frame has been depacketised from RTP 
+        /// packets. If the underlying RTP logic does not know how to depacketise the video stream
+        /// the <see cref="GotVideoRtp"/> should be used instead.
+        /// </summary>
+        /// <param name="remoteEndPoint">The remote end point the encoded frame packet(s) were received from.</param>
+        /// <param name="timestamp">The RTP timestamp for the encoded frame.</param>
+        /// <param name="encodedFrame">The buffer containing the encoded video frame.</param>
+        /// <param name="encodedFormat">The format of the encoded video frame. Typically the format 
+        /// is negotiated by exchanging SDP offer/answers and then matched against the RTP header
+        /// payload ID.</param>
+        void GotVideoFrame(IPEndPoint remoteEndPoint, uint timestamp, byte[] encodedFrame, VideoFormat encodedFormat);
 
-        void GotVideoFrame(IPEndPoint remoteEndPoint, uint timestamp, byte[] payload);
+        /// <summary>
+        /// This method should only be used where the paketisation format of the video stream is not supported.
+        /// It will be up to the consumer of the event to reconstruct the encoded video frames from the individual
+        /// RTP packets.
+        /// </summary>
+        /// <param name="remoteEndPoint">The remote end point the RTP packets were received from.</param>
+        /// <param name="ssrc">The synchronisation source for the RTP packet.</param>
+        /// <param name="seqnum">The sequence number for the RTP packet.</param>
+        /// <param name="timestamp">The timestamp in RTP units for the RTP packet.</param>
+        /// <param name="payloadID">The payload ID for the RTP packet.</param>
+        /// <param name="marker">True if the marker bit was set on the RTP packet.</param>
+        /// <param name="encodedPayload">The RTP packet payload.</param>
+        void GotVideoRtp(IPEndPoint remoteEndPoint, uint ssrc, uint seqnum, uint timestamp, int payloadID, bool marker, byte[] rtpPayload);
 
-        List<VideoFormat> GetVideoSinkFormats();
-
-        void SetVideoSinkFormat(VideoFormat videoFormat);
+        List<VideoFormat> GetDecoderFormats();
 
         void RestrictFormats(Func<VideoFormat, bool> filter);
 
+        /// <summary>
+        /// Pauses the decoding of a video stream. Note that pausing the decoding of a video stream means a new key frame will
+        /// need to be requested from the encoder when the stream is resumed.  Other than key frames each encoded video 
+        /// frame depends on a set of previous decoded frames. If the decoder misses a frame then typically all subsequent frames
+        /// up until the next key frame will not be able to be decoded.
+        /// </summary>
         Task PauseVideoSink();
-
+        
         Task ResumeVideoSink();
-
+        
         Task StartVideoSink();
-
+        
         Task CloseVideoSink();
     }
 }
