@@ -1,5 +1,7 @@
 ﻿using System;
+using System.Buffers;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
@@ -164,7 +166,7 @@ namespace SIPSorceryMedia.Abstractions
         public const int DEFAULT_CHANNEL_COUNT = 1;
 
         public static readonly AudioFormat Empty = new AudioFormat()
-            { _isNonEmpty = false, ClockRate = DEFAULT_CLOCK_RATE, ChannelCount = DEFAULT_CHANNEL_COUNT };
+        { _isNonEmpty = false, ClockRate = DEFAULT_CLOCK_RATE, ChannelCount = DEFAULT_CHANNEL_COUNT };
 
         public AudioCodecsEnum Codec { get; set; }
 
@@ -288,7 +290,7 @@ namespace SIPSorceryMedia.Abstractions
             {
                 throw new ApplicationException($"The format name must be provided for an AudioFormat.");
             }
-            else if(clockRate <= 0)
+            else if (clockRate <= 0)
             {
                 throw new ApplicationException($"The clock rate for an AudioFormat must be greater than 0.");
             }
@@ -329,7 +331,7 @@ namespace SIPSorceryMedia.Abstractions
         public const int DEFAULT_CLOCK_RATE = 90000;
 
         public static readonly VideoFormat Empty = new VideoFormat()
-            { _isNonEmpty = false, ClockRate = DEFAULT_CLOCK_RATE };
+        { _isNonEmpty = false, ClockRate = DEFAULT_CLOCK_RATE };
 
         public VideoCodecsEnum Codec { get; set; }
 
@@ -545,6 +547,14 @@ namespace SIPSorceryMedia.Abstractions
         byte[] EncodeAudio(short[] pcm, AudioFormat format);
 
         /// <summary>
+        /// Encodes 16bit signed PCM samples.
+        /// </summary>
+        /// <param name="pcm">An array of 16 bit signed audio samples.</param>
+        /// <param name="format">The audio format to encode the PCM sample to.</param>
+        /// <param name="destination">A <see cref="IBufferWriter{T}"/> of <see langword="byte"/> to receieve the encoded sample.</param>
+        void EncodeAudio(ReadOnlySpan<short> pcm, AudioFormat format, IBufferWriter<byte> destination);
+
+        /// <summary>
         /// Decodes to 16bit signed PCM samples.
         /// </summary>
         /// <param name="encodedSample">The byte array containing the encoded sample.</param>
@@ -648,6 +658,8 @@ namespace SIPSorceryMedia.Abstractions
     public interface IAudioSource
     {
         event EncodedSampleDelegate OnAudioSourceEncodedSample;
+
+        event Action<uint, ReadOnlyMemory<byte>> OnAudioSourceEncodedSampleEx;
 
         event RawAudioSampleDelegate OnAudioSourceRawSample;
 
