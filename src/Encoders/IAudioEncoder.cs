@@ -18,7 +18,7 @@ using System.Collections.Generic;
 
 namespace SIPSorceryMedia.Abstractions;
 
-public interface IAudioEncoder
+public interface IAudioEncoder: IDisposable
 {
     /// <summary>
     /// Needs to be set with the list of audio formats that the encoder supports.
