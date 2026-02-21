@@ -1,3 +1,7 @@
+# Repository Moved as of 21 Feb 2026
+
+The repository has now been absorbed into the main [SIPSorcery](https://github.com/sipsorcery-org/sipsorcery) repository. Any iusses or pull requests should be raised there.
+
 # SIPSorceryMedia.Abstractions
 
 This project provides the logic for the interfaces required by the [SIPSorcery](https://github.com/sipsorcery-org/sipsorcery) real-time communications library and the components that provide functions such as:
